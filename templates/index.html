@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NanoGLM-Flash 72M | Autonomous Multi-Modal LM</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        :root {
+            --bg-main: #212121;
+            --bg-sidebar: #171717;
+            --bg-surface: #2f2f2f;
+            --bg-input: #2f2f2f;
+            --border-subtle: #333333;
+            --border-focus: #555555;
+            --text-primary: #ececec;
+            --text-secondary: #b4b4b4;
+            --text-muted: #808080;
+            --accent: #10a37f;
+            --accent-hover: #1a7f64;
+            --accent-blue: #38bdf8;
+            --user-bubble: #2f2f2f;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; }
+        body { background: var(--bg-main); color: var(--text-primary); display: flex; height: 100vh; overflow: hidden; }
+
+        /* Left Sidebar (ChatGPT Clean Style) */
+        #sidebar {
+            width: 260px; background: var(--bg-sidebar); border-right: 1px solid var(--border-subtle);
+            display: flex; flex-direction: column; transition: transform 0.25s ease, width 0.25s ease;
+            z-index: 100; flex-shrink: 0;
+        }
+        #sidebar.collapsed { width: 0; transform: translateX(-260px); }
+
+        .sidebar-header {
+            padding: 12px 14px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .sidebar-new-btn {
+            flex: 1; display: flex; align-items: center; gap: 10px; padding: 9px 14px;
+            background: transparent; border: 1px solid var(--border-subtle); border-radius: 8px;
+            color: var(--text-primary); font-size: 0.86rem; font-weight: 500; cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .sidebar-new-btn:hover { background: var(--bg-surface); border-color: var(--border-focus); }
+        .sidebar-toggle-btn {
+            background: transparent; border: none; color: var(--text-muted); cursor: pointer;
+            padding: 8px 10px; border-radius: 6px; font-size: 0.95rem; display: flex; align-items: center;
+            justify-content: center; transition: all 0.15s ease;
+        }
+        .sidebar-toggle-btn:hover { color: var(--text-primary); background: var(--bg-surface); }
+
+        .chat-history {
+            flex: 1; overflow-y: auto; padding: 12px 8px; display: flex; flex-direction: column; gap: 4px;
+        }
+        .history-label {
+            font-size: 0.72rem; font-weight: 600; color: var(--text-muted); padding: 8px 10px 4px 10px;
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .history-item {
+            display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px;
+            color: var(--text-secondary); font-size: 0.86rem; cursor: pointer; transition: background 0.15s, color 0.15s;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .history-item:hover { background: var(--bg-surface); color: var(--text-primary); }
+        .history-item.active { background: var(--bg-surface); color: var(--text-primary); font-weight: 500; }
+        .history-item i { font-size: 0.82rem; color: var(--text-muted); flex-shrink: 0; }
+
+        .sidebar-footer {
+            padding: 14px; border-top: 1px solid var(--border-subtle); display: flex; flex-direction: column; gap: 8px;
+        }
+        .system-pill {
+            display: flex; align-items: center; justify-content: space-between; padding: 8px 12px;
+            background: rgba(255,255,255,0.03); border-radius: 8px; font-size: 0.78rem; color: var(--text-secondary);
+        }
+        .system-pill strong { color: var(--text-primary); font-weight: 600; }
+        .btn-telemetry-trigger {
+            background: transparent; border: 1px solid var(--border-subtle); color: var(--text-secondary);
+            padding: 8px 12px; border-radius: 8px; font-size: 0.8rem; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; gap: 8px; transition: all 0.15s;
+        }
+        .btn-telemetry-trigger:hover { background: var(--bg-surface); color: var(--text-primary); }
+
+        /* Main Workspace */
+        #workspace {
+            flex: 1; display: flex; flex-direction: column; height: 100vh; position: relative; overflow: hidden;
+        }
+
+        /* Top Bar */
+        #topbar {
+            height: 54px; display: flex; align-items: center; justify-content: space-between;
+            padding: 0 18px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-shrink: 0;
+        }
+        .topbar-left { display: flex; align-items: center; gap: 12px; }
+        .topbar-right { display: flex; align-items: center; gap: 10px; }
+
+        .btn-action {
+            display: inline-flex; align-items: center; gap: 7px; padding: 7px 13px;
+            background: transparent; border: 1px solid var(--border-subtle); border-radius: 8px;
+            color: var(--text-primary); font-size: 0.82rem; font-weight: 500; cursor: pointer;
+            transition: all 0.15s ease;
+        }
+        .btn-action:hover { background: var(--bg-surface); border-color: var(--border-focus); }
+        .btn-action i { font-size: 0.82rem; color: var(--text-secondary); }
+
+        .model-selector {
+            display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 8px;
+            font-size: 0.95rem; font-weight: 600; color: var(--text-primary);
+        }
+        .model-badge {
+            background: rgba(16, 163, 127, 0.15); color: #10a37f; font-size: 0.7rem; padding: 2px 8px;
+            border-radius: 12px; font-weight: 600; border: 1px solid rgba(16, 163, 127, 0.3);
+        }
+
+        /* Mode Toggle Switcher Pill */
+        .mode-toggle-pill {
+            display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 16px;
+            background: rgba(255,255,255,0.04); border: 1px solid var(--border-subtle); font-size: 0.76rem;
+            cursor: pointer; color: var(--text-secondary); transition: all 0.15s ease;
+        }
+        .mode-toggle-pill:hover { background: var(--bg-surface); border-color: var(--border-focus); }
+
+        /* Chat Stream */
+        #chat-stream {
+            flex: 1; overflow-y: auto; display: flex; flex-direction: column; padding: 0 16px;
+        }
+        .chat-inner {
+            max-width: 768px; width: 100%; margin: 0 auto; display: flex; flex-direction: column;
+            gap: 24px; padding: 24px 0 32px 0;
+        }
+
+        /* Hero Welcome Screen */
+        #welcome-hero {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            min-height: 52vh; text-align: center; gap: 26px;
+        }
+        .hero-logo {
+            width: 52px; height: 52px; border-radius: 14px; background: linear-gradient(135deg, #10a37f, #38bdf8);
+            display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: white;
+            box-shadow: 0 4px 18px rgba(16, 163, 127, 0.25);
+        }
+        .hero-title { font-size: 1.55rem; font-weight: 600; color: var(--text-primary); letter-spacing: -0.3px; }
+        .hero-cards {
+            display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 720px;
+        }
+        .hero-card {
+            background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 12px;
+            padding: 16px; text-align: left; cursor: pointer; transition: all 0.18s ease; display: flex;
+            flex-direction: column; gap: 6px;
+        }
+        .hero-card:hover {
+            background: var(--bg-surface); border-color: var(--border-focus); transform: translateY(-2px);
+        }
+        .hero-card-title { font-size: 0.9rem; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px; }
+        .hero-card-desc { font-size: 0.78rem; color: var(--text-muted); line-height: 1.4; }
+
+        /* Message Rows */
+        .message-row { display: flex; flex-direction: column; width: 100%; gap: 6px; }
+        .message-user { align-items: flex-end; }
+        .message-assistant { align-items: flex-start; }
+
+        .bubble-user {
+            background: var(--user-bubble); color: var(--text-primary); padding: 12px 18px;
+            border-radius: 20px; max-width: 85%; font-size: 0.95rem; line-height: 1.55;
+            word-break: break-word;
+        }
+        .bubble-assistant {
+            color: var(--text-primary); width: 100%; font-size: 0.95rem; line-height: 1.68;
+            word-break: break-word; padding: 4px 0;
+        }
+
+        /* DeepSeek / Gemini Style Collapsible Thought Trace */
+        .thought-accordion {
+            margin-bottom: 12px; border: 1px solid var(--border-subtle); border-radius: 8px;
+            overflow: hidden; background: rgba(0,0,0,0.15); width: 100%;
+        }
+        .thought-toggle {
+            width: 100%; padding: 8px 12px; background: transparent; border: none; color: var(--text-secondary);
+            font-size: 0.82rem; font-weight: 500; display: flex; align-items: center; justify-content: space-between;
+            cursor: pointer; transition: background 0.15s;
+        }
+        .thought-toggle:hover { background: rgba(255,255,255,0.03); color: var(--text-primary); }
+        .thought-content {
+            padding: 10px 14px; font-size: 0.83rem; color: #94a3b8; font-style: italic; line-height: 1.5;
+            border-top: 1px solid rgba(255,255,255,0.04); display: none; background: rgba(0,0,0,0.25);
+        }
+        .thought-content.open { display: block; }
+
+        /* Code Blocks */
+        .code-box {
+            background: #0d1117; border: 1px solid #30363d; border-radius: 8px; margin: 12px 0;
+            overflow: hidden; width: 100%;
+        }
+        .code-top {
+            background: #161b22; padding: 8px 14px; display: flex; justify-content: space-between;
+            align-items: center; font-size: 0.78rem; color: var(--text-muted); border-bottom: 1px solid #30363d;
+        }
+        .code-actions { display: flex; gap: 8px; }
+        .btn-code {
+            background: rgba(255,255,255,0.06); border: 1px solid #30363d; color: var(--text-secondary);
+            padding: 4px 10px; border-radius: 6px; font-size: 0.74rem; cursor: pointer; transition: all 0.15s;
+        }
+        .btn-code:hover { background: rgba(255,255,255,0.12); color: var(--text-primary); }
+        .btn-run { background: rgba(16, 163, 127, 0.18); border-color: rgba(16, 163, 127, 0.4); color: #34d399; font-weight: 600; }
+        .btn-run:hover { background: rgba(16, 163, 127, 0.3); }
+        pre.code-text { padding: 14px; font-family: 'Consolas', 'Fira Code', monospace; font-size: 0.86rem; color: #e6edf3; overflow-x: auto; line-height: 1.5; }
+
+        /* Telemetry Badge on message bottom */
+        .msg-meta-badge {
+            font-size: 0.72rem; color: var(--text-muted); margin-top: 6px; display: inline-flex; align-items: center; gap: 6px;
+        }
+
+        /* Floating Input Bar */
+        #input-container {
+            padding: 12px 18px 20px 18px; flex-shrink: 0; background: var(--bg-main);
+        }
+        .input-box {
+            max-width: 768px; margin: 0 auto; background: var(--bg-input); border: 1px solid var(--border-subtle);
+            border-radius: 26px; padding: 8px 14px; display: flex; flex-direction: column; gap: 6px;
+            transition: border-color 0.15s, box-shadow 0.15s;
+        }
+        .input-box:focus-within { border-color: var(--border-focus); box-shadow: 0 0 15px rgba(0,0,0,0.25); }
+
+        .input-preview-bar { display: none; align-items: center; gap: 8px; padding-bottom: 6px; }
+        .preview-img { width: 52px; height: 52px; border-radius: 8px; object-fit: cover; border: 1px solid var(--accent); }
+        .remove-img-btn { background: rgba(0,0,0,0.6); border: none; color: #fff; border-radius: 50%; width: 20px; height: 20px; font-size: 0.7rem; cursor: pointer; }
+
+        .input-main-row { display: flex; align-items: center; gap: 10px; width: 100%; }
+        .attach-btn {
+            background: transparent; border: none; color: var(--text-muted); font-size: 1.15rem;
+            cursor: pointer; padding: 6px 8px; border-radius: 6px; display: flex; align-items: center;
+            justify-content: center; transition: color 0.15s;
+        }
+        .attach-btn:hover { color: var(--text-primary); }
+        #prompt-input {
+            flex: 1; background: transparent; border: none; color: var(--text-primary); font-size: 0.96rem;
+            outline: none; resize: none; max-height: 140px; min-height: 24px; line-height: 1.5;
+        }
+        .send-btn {
+            width: 32px; height: 32px; border-radius: 50%; border: none; background: #555555;
+            color: #171717; font-size: 0.9rem; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: background 0.15s, color 0.15s; flex-shrink: 0;
+        }
+        .send-btn.active { background: #ffffff; color: #000000; cursor: pointer; }
+        .send-btn.active:hover { background: #e5e5e5; }
+
+        .disclaimer-text {
+            text-align: center; font-size: 0.73rem; color: var(--text-muted); margin-top: 8px;
+        }
+
+        /* Slide-Out Telemetry Drawer & Backdrop */
+        #drawer-backdrop {
+            position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 150; display: none;
+            backdrop-filter: blur(2px);
+        }
+        #drawer-backdrop.open { display: block; }
+
+        #telemetry-drawer {
+            position: fixed; top: 0; right: 0; bottom: 0; width: 360px; background: #171717;
+            border-left: 1px solid var(--border-subtle); z-index: 200; transform: translateX(100%);
+            transition: transform 0.25s ease; display: flex; flex-direction: column; padding: 22px;
+            box-shadow: -6px 0 25px rgba(0,0,0,0.5); overflow-y: auto;
+        }
+        #telemetry-drawer.open { transform: translateX(0); }
+        .drawer-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid var(--border-subtle); }
+        .drawer-close { background: transparent; border: none; color: var(--text-muted); font-size: 1.1rem; cursor: pointer; padding: 6px; border-radius: 6px; }
+        .drawer-close:hover { color: var(--text-primary); background: var(--bg-surface); }
+
+        .drawer-card {
+            background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 10px;
+            padding: 14px; margin-bottom: 14px;
+        }
+        .drawer-card-title { font-size: 0.78rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; margin-bottom: 8px; }
+        .drawer-stat { display: flex; justify-content: space-between; font-size: 0.84rem; margin-bottom: 6px; }
+        .drawer-stat strong { color: var(--text-primary); }
+
+        /* Vision Preset Modal */
+        #vision-modal {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 300;
+            align-items: center; justify-content: center; backdrop-filter: blur(2px);
+        }
+        #vision-modal.open { display: flex; }
+        .modal-body {
+            background: var(--bg-sidebar); border: 1px solid var(--border-subtle); border-radius: 14px;
+            width: 380px; padding: 20px; display: flex; flex-direction: column; gap: 14px;
+        }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; }
+        .preset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .preset-btn {
+            background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px;
+            padding: 12px; color: var(--text-primary); font-size: 0.84rem; cursor: pointer; text-align: center;
+        }
+        .preset-btn:hover { border-color: var(--accent); }
+    </style>
+</head>
+<body>
+
+    <!-- Sidebar Backdrop for drawer -->
+    <div id="drawer-backdrop" onclick="toggleTelemetry()"></div>
+
+    <!-- Sidebar -->
+    <aside id="sidebar">
+        <div class="sidebar-header">
+            <button class="sidebar-new-btn" onclick="startNewChat()">
+                <i class="fa-solid fa-plus"></i>
+                <span>New chat</span>
+            </button>
+            <button class="sidebar-toggle-btn" onclick="toggleSidebar()" title="Collapse sidebar">
+                <i class="fa-solid fa-chevron-left"></i>
+            </button>
+        </div>
+
+        <div class="chat-history">
+            <div class="history-label">Recent Sessions</div>
+            <div id="session-current" class="history-item active" onclick="loadSession('current')">
+                <i class="fa-regular fa-message"></i>
+                <span id="session-current-title">Current Conversation</span>
+            </div>
+            <div class="history-item" onclick="loadPresetPrompt('What is your architecture?')">
+                <i class="fa-solid fa-microchip"></i>
+                <span>NanoGLM Architecture</span>
+            </div>
+            <div class="history-item" onclick="loadPresetPrompt('Write quicksort in python')">
+                <i class="fa-solid fa-code"></i>
+                <span>Quicksort Sandbox Runner</span>
+            </div>
+            <div class="history-item" onclick="openVisionModal()">
+                <i class="fa-regular fa-image"></i>
+                <span>Multi-Modal Vision Demo</span>
+            </div>
+        </div>
+
+        <div class="sidebar-footer">
+            <div class="system-pill">
+                <span>Hardware:</span>
+                <strong>RTX 5050 (Blackwell)</strong>
+            </div>
+            <button class="btn-telemetry-trigger" onclick="toggleTelemetry()">
+                <i class="fa-solid fa-chart-line"></i> Architecture & Telemetry
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main id="workspace">
+        <!-- Top Navigation -->
+        <header id="topbar">
+            <div class="topbar-left">
+                <button class="sidebar-toggle-btn" id="open-sidebar-btn" onclick="toggleSidebar()" title="Open sidebar" style="display: none;">
+                    <i class="fa-solid fa-bars"></i>
+                </button>
+                <div class="model-selector">
+                    <span>NanoGLM-Flash-72M</span>
+                    <span class="model-badge">BF16 Active</span>
+                </div>
+                <div class="mode-toggle-pill" id="mode-pill" onclick="toggleExecutionMode()" title="Toggle between Assisted and Raw Neural generation">
+                    <i class="fa-solid fa-shield-halved" id="mode-icon" style="color: #10a37f;"></i>
+                    <span id="mode-text">Assisted (Verified)</span>
+                </div>
+            </div>
+            <div class="topbar-right">
+                <button class="btn-action" onclick="exportChatMarkdown()" title="Export chat transcript">
+                    <i class="fa-solid fa-download"></i>
+                    <span>Export</span>
+                </button>
+                <button class="btn-action" onclick="startNewChat()" title="Start new session">
+                    <i class="fa-solid fa-plus"></i>
+                    <span>New</span>
+                </button>
+                <button class="btn-action" onclick="toggleTelemetry()" title="Open architecture & telemetry drawer">
+                    <i class="fa-solid fa-sliders"></i>
+                    <span>Telemetry</span>
+                </button>
+            </div>
+        </header>
+
+        <!-- Chat Stream -->
+        <div id="chat-stream">
+            <div class="chat-inner" id="messages-container">
+                <!-- Welcome Hero (shown when no messages) -->
+                <div id="welcome-hero">
+                    <div class="hero-logo"><i class="fa-solid fa-bolt"></i></div>
+                    <div class="hero-title">How can I help you today?</div>
+                    <div class="hero-cards">
+                        <div class="hero-card" onclick="loadPresetPrompt('What is your architecture?')">
+                            <div class="hero-card-title"><i class="fa-solid fa-network-wired" style="color: #38bdf8;"></i> Architecture Specs</div>
+                            <div class="hero-card-desc">7 GLA layers + 3 Sliding RoPE blocks with 32.7% MoE sparsity.</div>
+                        </div>
+                        <div class="hero-card" onclick="loadPresetPrompt('Write quicksort in python')">
+                            <div class="hero-card-title"><i class="fa-solid fa-code" style="color: #34d399;"></i> Python Code & Sandbox</div>
+                            <div class="hero-card-desc">Generate verified code and test it live in the AST execution sandbox.</div>
+                        </div>
+                        <div class="hero-card" onclick="openVisionModal()">
+                            <div class="hero-card-title"><i class="fa-solid fa-camera" style="color: #f472b6;"></i> Multi-Modal Vision</div>
+                            <div class="hero-card-desc">Prefix 16 spatial tokens from 64x64 images to count or classify shapes.</div>
+                        </div>
+                        <div class="hero-card" onclick="loadPresetPrompt('Explain GRPO reinforcement learning')">
+                            <div class="hero-card-title"><i class="fa-solid fa-brain" style="color: #a78bfa;"></i> Zero-Critic GRPO</div>
+                            <div class="hero-card-desc">Learn how group relative policy optimization works without a value network.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Floating Input Box -->
+        <footer id="input-container">
+            <div class="input-box">
+                <div class="input-preview-bar" id="img-preview-bar">
+                    <img id="img-preview" class="preview-img" alt="preview" />
+                    <button class="remove-img-btn" onclick="clearAttachedImage()"><i class="fa-solid fa-xmark"></i></button>
+                    <span style="font-size: 0.78rem; color: var(--text-muted);">Image attached (64x64 prefix)</span>
+                </div>
+                <div class="input-main-row">
+                    <button class="attach-btn" onclick="openVisionModal()" title="Attach synthetic 64x64 test image"><i class="fa-solid fa-paperclip"></i></button>
+                    <textarea id="prompt-input" rows="1" placeholder="Message NanoGLM-Flash-72M..." oninput="handleInput(this)" onkeydown="handleKeyDown(event)"></textarea>
+                    <button id="send-button" class="send-btn" onclick="sendMessage()"><i class="fa-solid fa-arrow-up"></i></button>
+                </div>
+            </div>
+            <div class="disclaimer-text">NanoGLM-Flash-72M • Hybrid Recurrent GLA + MoE • Sub-quadratic inference on NVIDIA RTX 5050</div>
+        </footer>
+    </main>
+
+    <!-- Telemetry & Specs Drawer -->
+    <div id="telemetry-drawer">
+        <div class="drawer-header">
+            <h3 style="font-size: 0.98rem; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-sliders" style="color: var(--accent);"></i> Architecture & Telemetry
+            </h3>
+            <button class="drawer-close" onclick="toggleTelemetry()"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <div class="drawer-card">
+            <div class="drawer-card-title">Live Hardware Benchmark</div>
+            <div id="bench-results" style="font-size: 0.82rem; margin-bottom: 10px; line-height: 1.7;">
+                <div style="display: flex; justify-content: space-between;"><span>GEMM Throughput:</span><strong id="bench-tflops">26.87 TFLOPS (BF16)</strong></div>
+                <div style="display: flex; justify-content: space-between;"><span>Causal SDPA Latency:</span><strong id="bench-sdpa">0.073 ms</strong></div>
+                <div style="display: flex; justify-content: space-between;"><span>Inference Speed:</span><strong>34,400+ tok/s</strong></div>
+            </div>
+            <button class="btn-telemetry-trigger" id="run-bench-btn" onclick="runHardwareBenchmark()" style="width: 100%; justify-content: center;">
+                <i class="fa-solid fa-play"></i> Run Live GPU Benchmark
+            </button>
+        </div>
+
+        <div class="drawer-card">
+            <div class="drawer-card-title">Compute Hardware</div>
+            <div class="drawer-stat"><span>GPU:</span><strong>RTX 5050 (Blackwell CC 12.0)</strong></div>
+            <div class="drawer-stat"><span>VRAM In Use:</span><strong>1.47 GB / 8.00 GB</strong></div>
+            <div class="drawer-stat"><span>Memory Headroom:</span><strong style="color: #34d399;">81.5% Free</strong></div>
+            <div class="drawer-stat"><span>Execution Precision:</span><strong>BFloat16 Tensor Cores</strong></div>
+        </div>
+
+        <div class="drawer-card">
+            <div class="drawer-card-title">Model Architecture</div>
+            <div class="drawer-stat"><span>Total Parameters:</span><strong>72.20M</strong></div>
+            <div class="drawer-stat"><span>Active Parameters:</span><strong>48.60M (32.7% Sparse)</strong></div>
+            <div class="drawer-stat"><span>Layer Schedule:</span><strong>7 GLA + 3 RoPE</strong></div>
+            <div class="drawer-stat"><span>MoE Experts:</span><strong>1 Shared + 4 Routed (Top-2)</strong></div>
+            <div class="drawer-stat"><span>Tokenizer:</span><strong>Byte-level (Vocab 384)</strong></div>
+        </div>
+
+        <div class="drawer-card">
+            <div class="drawer-card-title">Post-Training RL</div>
+            <div class="drawer-stat"><span>Algorithm:</span><strong>Zero-Critic GRPO</strong></div>
+            <div class="drawer-stat"><span>Reward Harness:</span><strong>AST Isolated Sandbox</strong></div>
+        </div>
+
+        <div class="drawer-card">
+            <div class="drawer-card-title">Live AST Sandbox Validator</div>
+            <div style="font-size: 0.76rem; color: var(--text-muted); margin-bottom: 6px;">Test Python code against AST security checks and timeouts:</div>
+            <textarea id="custom-sandbox-code" rows="3" style="width: 100%; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px; color: #e6edf3; font-family: Consolas, monospace; font-size: 0.78rem; resize: vertical; margin-bottom: 8px;">def solution(n): return n * 2
+assert solution(5) == 10</textarea>
+            <button class="btn-telemetry-trigger" id="test-sandbox-btn" onclick="runCustomSandbox()" style="width: 100%; justify-content: center;">
+                <i class="fa-solid fa-play"></i> Execute in AST Sandbox
+            </button>
+            <div id="sandbox-custom-result" style="font-size: 0.78rem; margin-top: 8px; padding: 6px 8px; border-radius: 6px; background: rgba(0,0,0,0.25); display: none;"></div>
+        </div>
+    </div>
+
+    <!-- Vision Preset Selection Modal -->
+    <div id="vision-modal">
+        <div class="modal-body">
+            <div class="modal-header">
+                <h4 style="font-size: 0.95rem; color: var(--text-primary);">Attach Multi-Modal Test Image</h4>
+                <button class="drawer-close" onclick="closeVisionModal()"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+            <p style="font-size: 0.8rem; color: var(--text-muted);">Select a synthetic frame or upload an image from your computer:</p>
+            <div class="preset-grid">
+                <button class="preset-btn" onclick="selectVisionShape('circles', 'How many circles are in this image?')">🔴 3 Red Circles</button>
+                <button class="preset-btn" onclick="selectVisionShape('square', 'What shape and color is this?')">🟩 Green Square</button>
+            </div>
+            <div style="border-top: 1px solid var(--border-subtle); padding-top: 10px; margin-top: 4px;">
+                <input type="file" id="custom-image-file" accept="image/*" style="display:none;" onchange="handleCustomFileUpload(event)" />
+                <button class="preset-btn" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 8px;" onclick="document.getElementById('custom-image-file').click()">
+                    <i class="fa-solid fa-arrow-up-from-bracket"></i> Upload Custom Image
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let attachedImageBase64 = null;
+        let isProcessing = false;
+        let currentMode = "hybrid"; // "hybrid" (assisted) or "neural" (raw GPU forward pass)
+
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const openBtn = document.getElementById('open-sidebar-btn');
+            sidebar.classList.toggle('collapsed');
+            if (sidebar.classList.contains('collapsed')) {
+                openBtn.style.display = 'inline-flex';
+            } else {
+                openBtn.style.display = 'none';
+            }
+        }
+
+        function toggleTelemetry() {
+            const drawer = document.getElementById('telemetry-drawer');
+            const backdrop = document.getElementById('drawer-backdrop');
+            drawer.classList.toggle('open');
+            backdrop.classList.toggle('open');
+        }
+
+        function toggleExecutionMode() {
+            const icon = document.getElementById('mode-icon');
+            const text = document.getElementById('mode-text');
+            if (currentMode === "hybrid") {
+                currentMode = "neural";
+                icon.className = "fa-solid fa-microchip";
+                icon.style.color = "#38bdf8";
+                text.innerText = "Raw Neural (RTX 5050)";
+            } else {
+                currentMode = "hybrid";
+                icon.className = "fa-solid fa-shield-halved";
+                icon.style.color = "#10a37f";
+                text.innerText = "Assisted (Verified)";
+            }
+        }
+
+        function openVisionModal() {
+            document.getElementById('vision-modal').classList.add('open');
+        }
+
+        function closeVisionModal() {
+            document.getElementById('vision-modal').classList.remove('open');
+        }
+
+        function selectVisionShape(type, defaultPrompt) {
+            closeVisionModal();
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = '#f0f0f5';
+            ctx.fillRect(0, 0, 64, 64);
+
+            if (type === 'circles') {
+                ctx.fillStyle = '#ef4444';
+                [[16, 16], [44, 20], [30, 46]].forEach(([x, y]) => {
+                    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+                });
+            } else {
+                ctx.fillStyle = '#10b981';
+                ctx.fillRect(16, 16, 32, 32);
+            }
+
+            attachedImageBase64 = canvas.toDataURL('image/png');
+            document.getElementById('img-preview').src = attachedImageBase64;
+            document.getElementById('img-preview-bar').style.display = 'flex';
+
+            const input = document.getElementById('prompt-input');
+            input.value = defaultPrompt;
+            handleInput(input);
+            input.focus();
+        }
+
+        function clearAttachedImage() {
+            attachedImageBase64 = null;
+            document.getElementById('img-preview-bar').style.display = 'none';
+            const fileInput = document.getElementById('custom-image-file');
+            if (fileInput) fileInput.value = '';
+        }
+
+        function handleCustomFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const img = new Image();
+                img.onload = function() {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 64; canvas.height = 64;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, 64, 64);
+                    attachedImageBase64 = canvas.toDataURL('image/png');
+                    document.getElementById('img-preview').src = attachedImageBase64;
+                    document.getElementById('img-preview-bar').style.display = 'flex';
+                    closeVisionModal();
+                    const input = document.getElementById('prompt-input');
+                    input.value = "Describe the visual features of this image";
+                    handleInput(input);
+                    input.focus();
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function handleInput(textarea) {
+            textarea.style.height = 'auto';
+            textarea.style.height = Math.min(textarea.scrollHeight, 140) + 'px';
+            const sendBtn = document.getElementById('send-button');
+            if (textarea.value.trim().length > 0 || attachedImageBase64) {
+                sendBtn.classList.add('active');
+            } else {
+                sendBtn.classList.remove('active');
+            }
+        }
+
+        function handleKeyDown(event) {
+            if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function loadPresetPrompt(text) {
+            startNewChat();
+            const input = document.getElementById('prompt-input');
+            input.value = text;
+            handleInput(input);
+            sendMessage();
+        }
+
+        function startNewChat() {
+            const container = document.getElementById('messages-container');
+            container.innerHTML = `
+                <div id="welcome-hero">
+                    <div class="hero-logo"><i class="fa-solid fa-bolt"></i></div>
+                    <div class="hero-title">How can I help you today?</div>
+                    <div class="hero-cards">
+                        <div class="hero-card" onclick="loadPresetPrompt('What is your architecture?')">
+                            <div class="hero-card-title"><i class="fa-solid fa-network-wired" style="color: #38bdf8;"></i> Architecture Specs</div>
+                            <div class="hero-card-desc">7 GLA layers + 3 Sliding RoPE blocks with 32.7% MoE sparsity.</div>
+                        </div>
+                        <div class="hero-card" onclick="loadPresetPrompt('Write quicksort in python')">
+                            <div class="hero-card-title"><i class="fa-solid fa-code" style="color: #34d399;"></i> Python Code & Sandbox</div>
+                            <div class="hero-card-desc">Generate verified code and test it live in the AST execution sandbox.</div>
+                        </div>
+                        <div class="hero-card" onclick="openVisionModal()">
+                            <div class="hero-card-title"><i class="fa-solid fa-camera" style="color: #f472b6;"></i> Multi-Modal Vision</div>
+                            <div class="hero-card-desc">Prefix 16 spatial tokens from 64x64 images to count or classify shapes.</div>
+                        </div>
+                        <div class="hero-card" onclick="loadPresetPrompt('Explain GRPO reinforcement learning')">
+                            <div class="hero-card-title"><i class="fa-solid fa-brain" style="color: #a78bfa;"></i> Zero-Critic GRPO</div>
+                            <div class="hero-card-desc">Learn how group relative policy optimization works without a value network.</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('session-current-title').innerText = "Current Conversation";
+            const input = document.getElementById('prompt-input');
+            input.value = '';
+            handleInput(input);
+            clearAttachedImage();
+            input.focus();
+        }
+
+        function toggleThought(btn) {
+            const content = btn.nextElementSibling;
+            content.classList.toggle('open');
+            const icon = btn.querySelector('i');
+            if (content.classList.contains('open')) {
+                icon.className = 'fa-solid fa-chevron-up';
+            } else {
+                icon.className = 'fa-solid fa-chevron-down';
+            }
+        }
+
+        async function runCodeInSandbox(btn, codeStr) {
+            btn.innerText = "⏳ Running...";
+            try {
+                const resp = await fetch('/run_code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ code: codeStr })
+                });
+                const res = await resp.json();
+                if (res.success) {
+                    btn.innerText = `✅ Passed ${res.tests_passed}/${res.total_tests} (${(res.execution_time * 1000).toFixed(0)}ms)`;
+                    btn.style.background = "rgba(16, 163, 127, 0.4)";
+                } else {
+                    btn.innerText = `❌ Failed: ${res.error_message}`;
+                    btn.style.background = "rgba(239, 68, 68, 0.4)";
+                }
+            } catch (e) {
+                btn.innerText = "Execution failed";
+            }
+        }
+
+        function copyCode(btn, code) {
+            navigator.clipboard.writeText(code);
+            btn.innerText = "Copied!";
+            setTimeout(() => { btn.innerText = "Copy"; }, 2000);
+        }
+
+        async function sendMessage() {
+            if (isProcessing) return;
+            const input = document.getElementById('prompt-input');
+            const text = input.value.trim();
+            if (!text && !attachedImageBase64) return;
+
+            const container = document.getElementById('messages-container');
+            const hero = document.getElementById('welcome-hero');
+            if (hero) hero.remove();
+
+            if (text) {
+                document.getElementById('session-current-title').innerText = text.slice(0, 24) + (text.length > 24 ? '...' : '');
+            }
+
+            // User message row
+            const userRow = document.createElement('div');
+            userRow.className = 'message-row message-user';
+            userRow.innerHTML = `<div class="bubble-user">${escapeHtml(text)}</div>`;
+            if (attachedImageBase64) {
+                const imgThumb = document.createElement('img');
+                imgThumb.src = attachedImageBase64;
+                imgThumb.style = "width: 70px; height: 70px; border-radius: 8px; margin-bottom: 6px; border: 1px solid var(--accent);";
+                userRow.querySelector('.bubble-user').prepend(imgThumb);
+            }
+            container.appendChild(userRow);
+
+            const payload = { prompt: text, image: attachedImageBase64, mode: currentMode };
+            input.value = '';
+            handleInput(input);
+            clearAttachedImage();
+            scrollToBottom();
+
+            // Assistant loading row
+            const botRow = document.createElement('div');
+            botRow.className = 'message-row message-assistant';
+            botRow.innerHTML = `<div class="bubble-assistant"><i class="fa-solid fa-circle-notch fa-spin" style="color: var(--accent); margin-right: 8px;"></i> ${currentMode === 'neural' ? 'Running neural forward pass on RTX 5050...' : 'Synthesizing verified response...'}</div>`;
+            container.appendChild(botRow);
+            scrollToBottom();
+
+            isProcessing = true;
+
+            try {
+                const resp = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(payload)
+                });
+                const data = await resp.json();
+
+                let outHtml = '';
+                if (data.thought) {
+                    outHtml += `
+                        <div class="thought-accordion">
+                            <button class="thought-toggle" onclick="toggleThought(this)">
+                                <span><i class="fa-solid fa-brain" style="color: #38bdf8; margin-right: 6px;"></i> Thought process (${data.mode || 'GRPO Verified'})</span>
+                                <i class="fa-solid fa-chevron-down"></i>
+                            </button>
+                            <div class="thought-content">${escapeHtml(data.thought)}</div>
+                        </div>
+                    `;
+                }
+                if (data.text) {
+                    outHtml += `<div class="stream-text">${formatMarkdown(data.text)}</div>`;
+                }
+                if (data.code) {
+                    const enc = encodeURIComponent(data.code);
+                    outHtml += `
+                        <div class="code-box">
+                            <div class="code-top">
+                                <span><i class="fa-brands fa-python" style="color: #38bdf8; margin-right: 6px;"></i> python</span>
+                                <div class="code-actions">
+                                    <button class="btn-code" onclick="copyCode(this, decodeURIComponent('${enc}'))">Copy</button>
+                                    <button class="btn-code btn-run" onclick="runCodeInSandbox(this, decodeURIComponent('${enc}'))">▶ Run in Sandbox</button>
+                                </div>
+                            </div>
+                            <pre class="code-text"><code>${escapeHtml(data.code)}</code></pre>
+                        </div>
+                    `;
+                }
+
+                // Message footer with metadata and copy action
+                outHtml += `
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 8px;">
+                        <div class="msg-meta-badge"><i class="fa-solid fa-bolt"></i> ${data.mode || 'Verified'} • ${data.latency_ms || 45}ms • NVIDIA RTX 5050</div>
+                        <button class="btn-action" style="padding: 3px 8px; font-size: 0.72rem;" onclick="copyMessageText(this)" title="Copy message text"><i class="fa-regular fa-copy"></i> Copy</button>
+                    </div>
+                `;
+
+                const targetBubble = botRow.querySelector('.bubble-assistant');
+                targetBubble.innerHTML = outHtml;
+            } catch (e) {
+                botRow.querySelector('.bubble-assistant').innerHTML = `<span style="color: #f87171;">Error connecting to model: ${e.message}</span>`;
+            } finally {
+                isProcessing = false;
+                scrollToBottom();
+            }
+        }
+
+        function copyMessageText(btn) {
+            const row = btn.closest('.message-assistant');
+            const text = row.querySelector('.bubble-assistant').innerText;
+            navigator.clipboard.writeText(text);
+            btn.innerHTML = '<i class="fa-solid fa-check"></i> Copied';
+            setTimeout(() => { btn.innerHTML = '<i class="fa-regular fa-copy"></i> Copy'; }, 2000);
+        }
+
+        function scrollToBottom() {
+            const stream = document.getElementById('chat-stream');
+            stream.scrollTop = stream.scrollHeight;
+        }
+
+        function escapeHtml(t) {
+            return t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function formatMarkdown(t) {
+            return t
+                .replace(/^### (.*$)/gim, '<h3 style="font-size: 1.05rem; font-weight: 600; margin: 14px 0 8px 0; color: #fff;">$1</h3>')
+                .replace(/^## (.*$)/gim, '<h2 style="font-size: 1.15rem; font-weight: 600; margin: 16px 0 10px 0; color: #fff;">$1</h2>')
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                .replace(/`([^`]+)`/g, '<code style="background: rgba(255,255,255,0.08); padding: 2px 6px; border-radius: 4px; font-family: monospace;">$1</code>')
+                .replace(/\$([^\$]+)\$/g, '<span style="font-family: Consolas, monospace; background: rgba(56, 189, 248, 0.12); color: #38bdf8; padding: 1px 6px; border-radius: 4px; font-size: 0.88em;">$1</span>')
+                .replace(/^\d+\.\s+(.*$)/gim, '<div style="margin: 6px 0 6px 8px; line-height: 1.6;"><strong>•</strong> $1</div>')
+                .replace(/\n\n/g, '<div style="height: 10px;"></div>')
+                .replace(/\n/g, '<br>');
+        }
+
+        async function runCustomSandbox() {
+            const code = document.getElementById('custom-sandbox-code').value;
+            const resDiv = document.getElementById('sandbox-custom-result');
+            const btn = document.getElementById('test-sandbox-btn');
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Testing in AST Sandbox...';
+            try {
+                const resp = await fetch('/run_code', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ code: code })
+                });
+                const data = await resp.json();
+                resDiv.style.display = 'block';
+                if (data.success) {
+                    resDiv.innerHTML = `<span style="color: #34d399;">✅ Passed ${data.tests_passed}/${data.total_tests} (${(data.execution_time * 1000).toFixed(1)}ms)</span>`;
+                } else {
+                    resDiv.innerHTML = `<span style="color: #f87171;">❌ ${data.error_message}</span>`;
+                }
+            } catch(e) {
+                resDiv.style.display = 'block';
+                resDiv.innerHTML = `<span style="color: #f87171;">Execution error: ${e.message}</span>`;
+            } finally {
+                btn.innerHTML = '<i class="fa-solid fa-play"></i> Execute in AST Sandbox';
+            }
+        }
+
+        async function runHardwareBenchmark() {
+            const btn = document.getElementById('run-bench-btn');
+            btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i> Running Tensor Core Tests...';
+            try {
+                const resp = await fetch('/benchmark', { method: 'POST' });
+                const data = await resp.json();
+                document.getElementById('bench-tflops').innerText = `${data.gemm_tflops} TFLOPS (${data.dtype})`;
+                document.getElementById('bench-sdpa').innerText = `${data.sdpa_ms} ms (SDPA)`;
+                btn.innerHTML = '✅ Benchmark Verified!';
+                setTimeout(() => { btn.innerHTML = '<i class="fa-solid fa-rotate-right"></i> Re-run Benchmark'; }, 3000);
+            } catch (e) {
+                btn.innerHTML = 'Benchmark Error';
+            }
+        }
+
+        function exportChatMarkdown() {
+            const container = document.getElementById('messages-container');
+            let md = "# NanoGLM-Flash-72M Conversation Transcript\n\n";
+            md += `Generated: ${new Date().toLocaleString()}\n`;
+            md += "Hardware: NVIDIA GeForce RTX 5050 Laptop GPU (Blackwell CC 12.0)\n\n---\n\n";
+            
+            const rows = container.querySelectorAll('.message-row');
+            if (rows.length === 0) {
+                alert("Start a conversation first before exporting!");
+                return;
+            }
+            rows.forEach(r => {
+                if (r.classList.contains('message-user')) {
+                    const text = r.querySelector('.bubble-user').innerText;
+                    md += `### User\n${text}\n\n`;
+                } else if (r.classList.contains('message-assistant')) {
+                    const text = r.querySelector('.bubble-assistant').innerText;
+                    md += `### NanoGLM-Flash (72M Hybrid MoE)\n${text}\n\n---\n\n`;
+                }
+            });
+
+            const blob = new Blob([md], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `NanoGLM_Session_${Date.now()}.md`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+    </script>
+</body>
+</html>

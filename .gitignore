@@ -1,0 +1,26 @@
+# Virtual Environment
+.venv/
+env/
+venv/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+
+# Large PyTorch Weights & Checkpoints (>100MB exceeds GitHub push limits)
+checkpoints/
+*.pt
+*.pth
+*.bin
+*.ckpt
+
+# System & IDE
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
